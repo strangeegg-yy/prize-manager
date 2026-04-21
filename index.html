@@ -250,6 +250,37 @@
     .badge-low  { background: #e8f5e9; color: #2e7d32; font-size: 10px; padding: 1px 6px; border-radius: 8px; }
     .badge-high { background: #fce4ec; color: #c62828; font-size: 10px; padding: 1px 6px; border-radius: 8px; }
 
+    /* ── Sort buttons ── */
+    .sort-bar {
+      display: flex;
+      gap: 5px;
+      padding: 8px 12px;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+      background: #fafafa;
+    }
+    .sort-btn {
+      padding: 4px 10px;
+      border: 1.5px solid #ccc;
+      border-radius: 14px;
+      font-size: 11px;
+      background: #fff;
+      cursor: pointer;
+      color: #555;
+      white-space: nowrap;
+    }
+    .sort-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    /* 商品行の追加情報 */
+    .product-sub {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 4px;
+      align-items: center;
+    }
+    .sub-item { font-size: 10px; color: var(--muted); }
+
     /* ── Place settings ── */
     .place-row {
       display: flex;
@@ -477,6 +508,14 @@
     <div class="search-wrap">
       <input type="text" id="listSearch" placeholder="🔍 商品名で検索..." oninput="App.renderList()" style="margin-bottom:10px">
     </div>
+    <!-- ソートボタン -->
+    <div class="sort-bar">
+      <span style="font-size:11px;color:#aaa;align-self:center;margin-right:2px">並び替え：</span>
+      <button class="sort-btn active" id="sort-name"     onclick="App.setSort('name')">名前</button>
+      <button class="sort-btn"        id="sort-price"    onclick="App.setSort('price')">買取価格</button>
+      <button class="sort-btn"        id="sort-acqDate"  onclick="App.setSort('acqDate')">取得日</button>
+      <button class="sort-btn"        id="sort-recDate"  onclick="App.setSort('recDate')">入力日</button>
+    </div>
     <div id="productList"><div class="empty">読み込み中…</div></div>
   </div>
 </div>
@@ -592,6 +631,8 @@ const COLORS = {
 // ── State ──────────────────────────────────────
 let db = null;
 let priceChart = null;
+let sortBy  = 'name';
+let sortDir = 1; // 1=昇順, -1=降順
 const S = { products:[], inventories:[], records:[], places:[] };
 
 // ── Utils ──────────────────────────────────────
@@ -723,6 +764,26 @@ const App = window.App = {
     toast('記録しました ✓');
   },
 
+  // ── ソート設定 ────────────────────────────
+  setSort(key) {
+    if (sortBy === key) {
+      sortDir *= -1; // 同じキーなら昇順/降順切り替え
+    } else {
+      sortBy  = key;
+      sortDir = key === 'name' ? 1 : -1; // 価格・日付は新しい/高い順がデフォルト
+    }
+    // ボタン見た目更新
+    ['name','price','acqDate','recDate'].forEach(k => {
+      const btn = $('sort-' + k);
+      if (!btn) return;
+      btn.classList.toggle('active', k === sortBy);
+      btn.textContent = {
+        name:'名前', price:'買取価格', acqDate:'取得日', recDate:'入力日'
+      }[k] + (k === sortBy ? (sortDir === 1 ? ' ↑' : ' ↓') : '');
+    });
+    this.renderList();
+  },
+
   // ── 商品一覧 ──────────────────────────────
   renderList() {
     // サマリー更新
@@ -734,29 +795,69 @@ const App = window.App = {
     const q  = ($('listSearch')?.value || '').toLowerCase();
     const el = $('productList');
     if (!el) return;
-    const filtered = S.products
+
+    // 各商品に集計データを付与
+    const withData = S.products
       .filter(p => p.name.toLowerCase().includes(q))
-      .sort((a,b) => a.name.localeCompare(b.name,'ja'));
+      .map(p => {
+        const invs = S.inventories.filter(i => i.pid === p.id);
+        const recs = S.records.filter(r => r.pid === p.id)
+                     .sort((a,b) => (a.date||'').localeCompare(b.date||''));
+        const latestRec = recs.length ? recs[recs.length - 1] : null;
+        const prevPrice = recs.length > 1 ? recs[recs.length - 2].price : null;
+        return { p, invs, recs, latestRec, prevPrice };
+      });
 
-    if (!filtered.length) { el.innerHTML = '<div class="empty">商品がありません</div>'; return; }
+    // ソート
+    withData.sort((a, b) => {
+      let va, vb;
+      if (sortBy === 'name') {
+        return sortDir * a.p.name.localeCompare(b.p.name, 'ja');
+      } else if (sortBy === 'price') {
+        va = a.latestRec?.price ?? -1;
+        vb = b.latestRec?.price ?? -1;
+      } else if (sortBy === 'acqDate') {
+        va = a.invs[0]?.acqDate ?? '';
+        vb = b.invs[0]?.acqDate ?? '';
+      } else if (sortBy === 'recDate') {
+        va = a.latestRec?.date ?? '';
+        vb = b.latestRec?.date ?? '';
+      }
+      if (va < vb) return  sortDir;
+      if (va > vb) return -sortDir;
+      return 0;
+    });
 
-    el.innerHTML = filtered.map(p => {
-      const invs  = S.inventories.filter(i => i.pid === p.id);
-      const recs  = S.records.filter(r => r.pid === p.id)
-                    .sort((a,b) => (a.date||'').localeCompare(b.date||''));
-      const latest = recs.length ? recs[recs.length - 1].price : null;
-      const prev   = recs.length > 1 ? recs[recs.length - 2].price : null;
+    if (!withData.length) { el.innerHTML = '<div class="empty">商品がありません</div>'; return; }
+
+    el.innerHTML = withData.map(({ p, invs, recs, latestRec, prevPrice }) => {
+      const latest = latestRec?.price ?? null;
 
       // 価格トレンド
       let trendHtml = '';
-      if (latest != null && prev != null) {
-        if (latest > prev)       trendHtml = `<span class="price-trend-up">▲${(latest-prev).toLocaleString()}</span>`;
-        else if (latest < prev)  trendHtml = `<span class="price-trend-down">▼${(prev-latest).toLocaleString()}</span>`;
-        else                     trendHtml = `<span class="price-trend-flat">─</span>`;
+      if (latest != null && prevPrice != null) {
+        if (latest > prevPrice)      trendHtml = `<span class="price-trend-up">▲${(latest-prevPrice).toLocaleString()}</span>`;
+        else if (latest < prevPrice) trendHtml = `<span class="price-trend-down">▼${(prevPrice-latest).toLocaleString()}</span>`;
+        else                         trendHtml = `<span class="price-trend-flat">─</span>`;
       }
 
-      const place = invs[0]?.acqPlace ? S.places.find(pl => pl.name === invs[0].acqPlace) : null;
+      const inv   = invs[0];
+      const place = inv?.acqPlace ? S.places.find(pl => pl.name === inv.acqPlace) : null;
       const chipStyle = place ? `background:${COLORS[place.color]||'#999'}` : '';
+
+      // 取得情報行
+      const acqParts = [
+        inv?.acqDate  ? `📅 ${inv.acqDate}` : '',
+        inv?.acqPrice ? `取得 ${fmt(inv.acqPrice)}` : '',
+        place         ? `<span class="place-chip" style="${chipStyle}">${h(place.abbr||place.name)}</span>` : '',
+      ].filter(Boolean);
+
+      // 買取情報行
+      const recParts = [
+        latestRec?.date  ? `🏷 入力: ${latestRec.date}` : '',
+        recs.length      ? `記録 ${recs.length}件` : '',
+        invs.length > 1  ? `在庫 ${invs.length}個` : '',
+      ].filter(Boolean);
 
       return `
         <div class="product-item ${p.assist?'assist-on':''}" onclick="App.openDetail('${p.id}')">
@@ -771,12 +872,8 @@ const App = window.App = {
             <div class="product-name">
               ${p.assist ? '<span class="badge badge-assist">アシスト</span> ' : ''}${h(p.name)}
             </div>
-            <div class="product-meta">
-              ${recs.length  ? `<span class="badge badge-count">記録 ${recs.length}件</span>` : ''}
-              ${invs.length  ? `<span class="badge badge-inv">在庫 ${invs.length}個</span>` : ''}
-              ${place        ? `<span class="place-chip" style="${chipStyle}">${h(place.abbr||place.name)}</span>` : ''}
-              ${invs[0]?.acqDate ? `<span style="font-size:10px;color:#aaa">${invs[0].acqDate}</span>` : ''}
-            </div>
+            ${acqParts.length ? `<div class="product-sub">${acqParts.map(s=>`<span class="sub-item">${s}</span>`).join('')}</div>` : ''}
+            ${recParts.length ? `<div class="product-sub">${recParts.map(s=>`<span class="sub-item">${s}</span>`).join('')}</div>` : ''}
           </div>
         </div>`;
     }).join('');
