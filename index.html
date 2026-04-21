@@ -887,37 +887,55 @@ const App = window.App = {
     const recs = S.records.filter(r => r.pid === pid)
                  .sort((a,b) => (b.date||'').localeCompare(a.date||''));
 
+    const catLabel = { prize:'プライズ・クレゲー', scale:'スケールフィギュア', nendoroid:'ねんどろいど', other:'その他' };
+
     const invHtml = invs.length ? invs.map(inv => {
       const place = inv.acqPlace ? S.places.find(pl => pl.name === inv.acqPlace) : null;
       const chipStyle = place ? `background:${COLORS[place.color]||'#999'}` : '';
-      return `<div style="font-size:13px;padding:7px 0;border-bottom:1px solid #f0f0f0">
-        ${inv.acqDate  ? `📅 ${inv.acqDate}` : ''}
-        ${inv.acqPrice ? ` ${fmt(inv.acqPrice)}` : ''}
-        ${place ? ` <span class="place-chip" style="${chipStyle};font-size:10px">${h(place.abbr||place.name)}</span>` : ''}
-        ${inv.sellDate  ? `<br>💴 売却: ${inv.sellDate}` : ''}
-        ${inv.sellPrice ? ` ${fmt(inv.sellPrice)}` : ''}
-        <button class="btn btn-danger btn-sm" style="float:right" onclick="App.deleteInv('${inv.id}')">削除</button>
-      </div>`;
-    }).join('') : '<div style="font-size:13px;color:#888">在庫記録なし</div>';
+      return `
+        <div style="padding:10px 0;border-bottom:1px solid #f0f0f0">
+          <div style="font-size:13px;margin-bottom:4px">
+            ${inv.acqDate  ? `📅 ${inv.acqDate}` : '<span style="color:#bbb">取得日未設定</span>'}
+            ${inv.acqPrice ? ` ／ 取得 <b>${fmt(inv.acqPrice)}</b>` : ''}
+            ${place ? ` <span class="place-chip" style="${chipStyle};font-size:10px">${h(place.abbr||place.name)}</span>` : ''}
+          </div>
+          ${inv.sellDate || inv.sellPrice ? `<div style="font-size:12px;color:#888">
+            💴 売却: ${inv.sellDate||'─'} ${inv.sellPrice ? fmt(inv.sellPrice) : ''}
+          </div>` : ''}
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn btn-secondary btn-sm" onclick="App.editInv('${inv.id}','${p.id}')">✏️ 編集</button>
+            <button class="btn btn-danger btn-sm" onclick="App.deleteInv('${inv.id}','${p.id}')">削除</button>
+          </div>
+        </div>`;
+    }).join('') : '<div style="font-size:13px;color:#888;padding:8px 0">在庫記録なし</div>';
 
     const recsHtml = recs.length ? recs.map(r =>
-      `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f0f0f0;font-size:13px">
-        <span style="color:#888;flex:0 0 82px;font-size:12px">${r.date||''}</span>
+      `<div style="display:flex;align-items:center;gap:6px;padding:9px 0;border-bottom:1px solid #f0f0f0;font-size:13px;flex-wrap:wrap">
+        <span style="color:#888;font-size:11px;flex:0 0 80px">${r.date||'─'}</span>
         <span style="font-weight:700">${fmt(r.price)}</span>
         ${r.memo ? `<span style="color:#888;font-size:11px">${h(r.memo)}</span>` : ''}
-        <button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="App.deleteRecord('${r.id}')">削除</button>
+        <div style="margin-left:auto;display:flex;gap:5px">
+          <button class="btn btn-secondary btn-sm" onclick="App.editRec('${r.id}','${p.id}')">✏️</button>
+          <button class="btn btn-danger btn-sm" onclick="App.deleteRec('${r.id}','${p.id}')">削除</button>
+        </div>
       </div>`).join('')
-    : '<div style="font-size:13px;color:#888">価格記録なし</div>';
+    : '<div style="font-size:13px;color:#888;padding:8px 0">価格記録なし</div>';
 
     $('detailBox').innerHTML = `
-      <h3>${h(p.name)}</h3>
-      <div style="font-size:12px;color:#888;margin-bottom:14px">カテゴリ: ${h(p.cat)}</div>
-      <div style="font-size:12px;font-weight:700;margin-bottom:8px">在庫情報</div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px">
+        <h3 style="flex:1">${h(p.name)}</h3>
+        <button class="btn btn-secondary btn-sm" onclick="App.editProduct('${p.id}')">✏️ 編集</button>
+      </div>
+      <div style="font-size:12px;color:#888;margin-bottom:14px">カテゴリ: ${h(catLabel[p.cat]||p.cat)}</div>
+
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px">在庫情報</div>
       ${invHtml}
-      <div style="font-size:12px;font-weight:700;margin:14px 0 8px">価格履歴</div>
+
+      <div style="font-size:12px;font-weight:700;margin:14px 0 6px">価格履歴</div>
       ${recsHtml}
+
       <div class="modal-actions">
-        <button class="btn btn-danger" style="flex:1" onclick="App.deleteProduct('${p.id}')">商品を削除</button>
+        <button class="btn btn-danger" style="flex:1" onclick="App.deleteProduct('${p.id}')">🗑 商品を削除</button>
         <button class="btn btn-secondary" style="flex:1" onclick="App.closeDetail()">閉じる</button>
       </div>`;
     $('detailModal').style.display = 'flex';
@@ -925,17 +943,140 @@ const App = window.App = {
 
   closeDetail() { $('detailModal').style.display = 'none'; },
 
-  async deleteRecord(id) {
+  // ── 商品名・カテゴリ編集 ──────────────────
+  editProduct(pid) {
+    const p = S.products.find(x => x.id === pid);
+    if (!p) return;
+    $('detailBox').innerHTML = `
+      <h3 style="margin-bottom:14px">商品を編集</h3>
+      <div class="form-group">
+        <label>商品名</label>
+        <input type="text" id="ep-name" value="${h(p.name)}">
+      </div>
+      <div class="form-group">
+        <label>カテゴリ</label>
+        <select id="ep-cat">
+          <option value="prize"     ${p.cat==='prize'     ?'selected':''}>プライズ・クレゲー</option>
+          <option value="scale"     ${p.cat==='scale'     ?'selected':''}>スケールフィギュア</option>
+          <option value="nendoroid" ${p.cat==='nendoroid' ?'selected':''}>ねんどろいど</option>
+          <option value="other"     ${p.cat==='other'     ?'selected':''}>その他</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" style="flex:1" onclick="App.saveProduct('${pid}')">保存</button>
+        <button class="btn btn-secondary" style="flex:1" onclick="App.openDetail('${pid}')">キャンセル</button>
+      </div>`;
+  },
+
+  async saveProduct(pid) {
+    const name = $('ep-name')?.value?.trim();
+    const cat  = $('ep-cat')?.value;
+    if (!name) return toast('商品名を入力してください');
+    await setDoc(doc(db,'products',pid), { name, cat }, { merge:true });
+    toast('更新しました ✓');
+    this.openDetail(pid);
+  },
+
+  // ── 在庫情報編集 ──────────────────────────
+  editInv(id, pid) {
+    const inv = S.inventories.find(x => x.id === id);
+    if (!inv) return;
+    const placeOpts = S.places.map(pl =>
+      `<option value="${h(pl.name)}" ${inv.acqPlace===pl.name?'selected':''}>${h(pl.abbr||pl.name)}</option>`
+    ).join('');
+    $('detailBox').innerHTML = `
+      <h3 style="margin-bottom:14px">在庫情報を編集</h3>
+      <div class="row2">
+        <div class="form-group">
+          <label>取得日</label>
+          <input type="date" id="ei-acqDate" value="${inv.acqDate||''}">
+        </div>
+        <div class="form-group">
+          <label>取得金額（円）</label>
+          <input type="number" id="ei-acqPrice" value="${inv.acqPrice||''}" inputmode="numeric">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>取得場所</label>
+        <select id="ei-acqPlace">
+          <option value="">-- 選択 --</option>
+          ${placeOpts}
+        </select>
+      </div>
+      <div class="row2">
+        <div class="form-group">
+          <label>売却日</label>
+          <input type="date" id="ei-sellDate" value="${inv.sellDate||''}">
+        </div>
+        <div class="form-group">
+          <label>売却金額（円）</label>
+          <input type="number" id="ei-sellPrice" value="${inv.sellPrice||''}" inputmode="numeric">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" style="flex:1" onclick="App.saveInv('${id}','${pid}')">保存</button>
+        <button class="btn btn-secondary" style="flex:1" onclick="App.openDetail('${pid}')">キャンセル</button>
+      </div>`;
+  },
+
+  async saveInv(id, pid) {
+    const acqDate   = $('ei-acqDate')?.value   || null;
+    const acqPrice  = parseInt($('ei-acqPrice')?.value) || null;
+    const acqPlace  = $('ei-acqPlace')?.value  || null;
+    const sellDate  = $('ei-sellDate')?.value  || null;
+    const sellPrice = parseInt($('ei-sellPrice')?.value) || null;
+    await setDoc(doc(db,'inventories',id), { acqDate, acqPrice, acqPlace, sellDate, sellPrice }, { merge:true });
+    toast('更新しました ✓');
+    this.openDetail(pid);
+  },
+
+  // ── 価格記録編集 ──────────────────────────
+  editRec(id, pid) {
+    const r = S.records.find(x => x.id === id);
+    if (!r) return;
+    $('detailBox').innerHTML = `
+      <h3 style="margin-bottom:14px">価格記録を編集</h3>
+      <div class="row2">
+        <div class="form-group">
+          <label>買取価格（円）</label>
+          <input type="number" id="er-price" value="${r.price||''}" inputmode="numeric">
+        </div>
+        <div class="form-group">
+          <label>記録日</label>
+          <input type="date" id="er-date" value="${r.date||''}">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>メモ</label>
+        <input type="text" id="er-memo" value="${h(r.memo||'')}">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" style="flex:1" onclick="App.saveRec('${id}','${pid}')">保存</button>
+        <button class="btn btn-secondary" style="flex:1" onclick="App.openDetail('${pid}')">キャンセル</button>
+      </div>`;
+  },
+
+  async saveRec(id, pid) {
+    const price = parseInt($('er-price')?.value) || null;
+    const date  = $('er-date')?.value || null;
+    const memo  = $('er-memo')?.value?.trim() || '';
+    if (!price) return toast('価格を入力してください');
+    await setDoc(doc(db,'records',id), { price, date, memo }, { merge:true });
+    toast('更新しました ✓');
+    this.openDetail(pid);
+  },
+
+  async deleteRec(id, pid) {
     if (!confirm('この価格記録を削除しますか？')) return;
     await deleteDoc(doc(db,'records',id));
     toast('削除しました');
-    this.closeDetail();
+    this.openDetail(pid);
   },
-  async deleteInv(id) {
+  async deleteInv(id, pid) {
     if (!confirm('この在庫記録を削除しますか？')) return;
     await deleteDoc(doc(db,'inventories',id));
     toast('削除しました');
-    this.closeDetail();
+    this.openDetail(pid);
   },
   async deleteProduct(pid) {
     if (!confirm('この商品と関連する全記録を削除しますか？')) return;
@@ -1045,16 +1186,11 @@ const App = window.App = {
           ${isMax && !isMin ? '<span class="badge-high">最高</span>' : ''}
         </div>
         <div class="record-memo">${h(r.memo||'')}</div>
-        <button class="btn btn-danger btn-sm" onclick="App.deleteHistRecord('${r.id}')">×</button>
+        <button class="btn btn-danger btn-sm" onclick="App.deleteRec('${r.id}','')">×</button>
       </div>`;
     }).join('');
   },
 
-  async deleteHistRecord(id) {
-    if (!confirm('この記録を削除しますか？')) return;
-    await deleteDoc(doc(db,'records',id));
-    toast('削除しました');
-  },
 
   // ── アシスト獲得 ──────────────────────────
   renderAssist() {
