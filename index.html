@@ -135,7 +135,7 @@
 
     /* 左：価格エリア */
     .product-price-col {
-      flex: 0 0 72px;
+      flex: 0 0 80px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -144,7 +144,7 @@
       border-right: 1px solid var(--border);
       background: rgba(0,0,0,.02);
     }
-    .price-main { font-size: 17px; font-weight: 800; color: var(--text); line-height: 1.1; }
+    .price-main { font-size: 15px; font-weight: 800; color: var(--text); line-height: 1.1; }
     .price-label { font-size: 9px; color: var(--muted); margin-top: 2px; }
     .price-trend-up   { font-size: 10px; color: #e53935; }
     .price-trend-down { font-size: 10px; color: #43a047; }
@@ -397,7 +397,7 @@
     .archive-item:last-child { border-bottom: none; }
     .archive-item:active { background: #f5f5f5; }
     .archive-price-col {
-      flex: 0 0 72px;
+      flex: 0 0 80px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -636,6 +636,16 @@
 <!-- Tab: アーカイブ                       -->
 <!-- ══════════════════════════════════════ -->
 <div class="pane" id="pane-archive">
+  <!-- 説明カード -->
+  <div class="card" style="background:#f9f0e0;border:1px solid #f0d9a0;padding:12px 14px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:4px">📦 アーカイブとは？</div>
+    <div style="font-size:12px;color:#666;line-height:1.7">
+      在庫情報に<b>売却日・売却金額</b>を入力すると「売却済み」となり、<br>
+      在庫が0になった商品がここに移動します。<br>
+      タップすると過去の記録を確認できます。
+    </div>
+  </div>
+
   <div class="card card-flush">
     <div class="search-wrap">
       <input type="text" id="archiveSearch" placeholder="🔍 商品名で検索..." oninput="App.renderArchive()" style="margin-bottom:10px">
@@ -1317,32 +1327,50 @@ const App = window.App = {
     }
 
     el.innerHTML = archived.map(({ p, invs, soldInvs, recs, latestRec }) => {
-      const latest    = latestRec?.price ?? null;
-      const lastSold  = soldInvs.sort((a,b)=>(b.sellDate||'').localeCompare(a.sellDate||''))[0];
-      const place     = lastSold?.acqPlace ? S.places.find(pl => pl.name === lastSold.acqPlace) : null;
-      const chipStyle = place ? `background:${COLORS[place.color]||'#999'}` : '';
+      const latest   = latestRec?.price ?? null;
+      const lastSold = [...soldInvs].sort((a,b)=>(b.sellDate||'').localeCompare(a.sellDate||''))[0];
+      const acqPlace = lastSold?.acqPlace;
+      const place    = acqPlace ? S.places.find(pl => pl.name === acqPlace) : null;
+      const chipStyle= place ? `background:${COLORS[place.color]||'#999'}` : '';
 
-      const parts = [
-        lastSold?.sellDate  ? `💴 売却: ${lastSold.sellDate}` : '',
-        lastSold?.sellPrice ? fmt(lastSold.sellPrice) : '',
-        place               ? `<span class="place-chip" style="${chipStyle}">${h(place.abbr||place.name)}</span>` : '',
-        recs.length         ? `記録 ${recs.length}件` : '',
-        `計 ${invs.length}個獲得`,
-      ].filter(Boolean);
+      // 取得情報
+      const acqLine = [
+        lastSold?.acqDate  ? `取得: ${lastSold.acqDate}` : '',
+        lastSold?.acqPrice ? `${fmt(lastSold.acqPrice)}` : '',
+        place              ? `<span class="place-chip" style="${chipStyle}">${h(place.abbr||place.name)}</span>` : '',
+      ].filter(Boolean).join(' ');
+
+      // 売却情報
+      const sellLine = [
+        lastSold?.sellDate  ? `売却: ${lastSold.sellDate}` : '売却日未入力',
+        lastSold?.sellPrice ? `${fmt(lastSold.sellPrice)}` : '',
+      ].filter(Boolean).join(' ／ ');
+
+      // 損益
+      let profitHtml = '';
+      if (lastSold?.sellPrice && lastSold?.acqPrice) {
+        const diff = lastSold.sellPrice - lastSold.acqPrice;
+        const color = diff >= 0 ? '#2e7d32' : '#c62828';
+        const sign  = diff >= 0 ? '+' : '';
+        profitHtml = `<span style="font-size:11px;font-weight:700;color:${color}">${sign}${diff.toLocaleString()}円</span>`;
+      }
 
       return `
         <div class="archive-item" onclick="App.openDetail('${p.id}')">
           <div class="archive-price-col">
             ${latest != null
-              ? `<div class="price-main" style="color:#888">${latest>=1000?(latest/1000).toFixed(1)+'k':latest}</div>
-                 <div class="price-label">円</div>`
-              : `<div class="price-main" style="font-size:13px;color:#bbb">─</div>`}
+              ? `<div class="price-main" style="color:#888;font-size:${latest>=10000?'13px':'17px'}">${latest.toLocaleString()}</div>
+                 <div class="price-label">買取円</div>`
+              : `<div style="font-size:12px;color:#bbb;text-align:center">買取<br>記録なし</div>`}
             <div class="sold-badge">売却済</div>
           </div>
           <div class="product-info-col">
-            <div class="product-name" style="color:#666">${h(p.name)}</div>
+            <div class="product-name" style="color:#555">${h(p.name)}</div>
+            ${acqLine ? `<div class="product-sub"><span class="sub-item">📦 ${acqLine}</span></div>` : ''}
+            <div class="product-sub"><span class="sub-item">💴 ${sellLine}</span> ${profitHtml}</div>
             <div class="product-sub">
-              ${parts.map(s => `<span class="sub-item">${s}</span>`).join('')}
+              <span class="sub-item">計${invs.length}個獲得</span>
+              ${recs.length ? `<span class="sub-item">記録${recs.length}件</span>` : ''}
             </div>
           </div>
         </div>`;
