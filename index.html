@@ -447,6 +447,7 @@
   <button class="tab-btn" data-tab="history">履歴・推移</button>
   <button class="tab-btn" data-tab="assist">アシスト獲得</button>
   <button class="tab-btn" data-tab="archive">アーカイブ</button>
+  <button class="tab-btn" data-tab="saisen">お賽銭履歴</button>
   <button class="tab-btn" data-tab="places">取得場所の設定</button>
   <button class="tab-btn" data-tab="backup">バックアップ</button>
 </nav>
@@ -598,6 +599,49 @@
 </div>
 
 <!-- ══════════════════════════════════════ -->
+<!-- Tab: お賽銭履歴                       -->
+<!-- ══════════════════════════════════════ -->
+<div class="pane" id="pane-saisen">
+  <!-- 入力フォーム -->
+  <div class="card">
+    <div class="section-title">🪙 お賽銭を記録</div>
+    <div class="row2">
+      <div class="form-group">
+        <label>日付</label>
+        <input type="date" id="ss-date">
+      </div>
+      <div class="form-group">
+        <label>金額（円）</label>
+        <input type="number" id="ss-amount" placeholder="例：500" inputmode="numeric">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>場所</label>
+      <select id="ss-place">
+        <option value="">-- 選択 --</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>メモ（任意）</label>
+      <input type="text" id="ss-memo" placeholder="例：初音ミク狙い">
+    </div>
+    <button class="btn btn-primary btn-block" onclick="App.addSaisen()">記録する</button>
+  </div>
+
+  <!-- 集計 -->
+  <div class="summary-bar" id="saisenSummary" style="display:none">
+    <div class="summary-item"><div class="summary-val" id="ss-total-count">0</div><div class="summary-lbl">回</div></div>
+    <div class="summary-item"><div class="summary-val" id="ss-total-amount">¥0</div><div class="summary-lbl">合計</div></div>
+    <div class="summary-item"><div class="summary-val" id="ss-avg">¥0</div><div class="summary-lbl">平均/回</div></div>
+  </div>
+
+  <!-- 一覧 -->
+  <div class="card card-flush">
+    <div id="saisenList"><div class="empty">記録がありません</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
 <!-- Tab: 取得場所の設定                   -->
 <!-- ══════════════════════════════════════ -->
 <div class="pane" id="pane-places">
@@ -693,7 +737,7 @@ let db = null;
 let priceChart = null;
 let sortBy  = 'name';
 let sortDir = 1; // 1=昇順, -1=降順
-const S = { products:[], inventories:[], records:[], places:[] };
+const S = { products:[], inventories:[], records:[], places:[], saisens:[] };
 
 // ── Utils ──────────────────────────────────────
 const h   = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -727,7 +771,7 @@ window.saveConfig = () => {
 function boot(cfg) {
   const app = initializeApp(cfg);
   db = getFirestore(app);
-  ['products','inventories','records','places'].forEach(col => {
+  ['products','inventories','records','places','saisens'].forEach(col => {
     onSnapshot(collection(db, col), snap => {
       S[col] = snap.docs.map(d => ({ id:d.id, ...d.data() }));
       refresh(col);
@@ -744,7 +788,8 @@ function refresh(col) {
     updateHistorySelect();
   }
   if (col === 'records') { App.renderList(); App.renderArchive(); App.renderHistory(); }
-  if (col === 'places')  { App.renderPlaces(); updatePlaceSelect(); }
+  if (col === 'places')  { App.renderPlaces(); updatePlaceSelect(); updateSaisenPlaceSelect(); }
+  if (col === 'saisens') { App.renderSaisen(); }
 }
 
 // 在庫数を計算するユーティリティ（売却済み在庫は除く）
@@ -767,11 +812,17 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 // ── Selects update ────────────────────────────
+function placeOptionsHtml(selected = '') {
+  return '<option value="">-- 選択 --</option>' +
+    S.places.map(p => `<option value="${h(p.name)}" ${selected===p.name?'selected':''}>${h(p.abbr || p.name)}</option>`).join('');
+}
 function updatePlaceSelect() {
   const sel = $('f-acqPlace');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">-- 選択 --</option>' +
-    S.places.map(p => `<option value="${h(p.name)}">${h(p.abbr || p.name)}</option>`).join('');
+  if (sel) sel.innerHTML = placeOptionsHtml();
+}
+function updateSaisenPlaceSelect() {
+  const sel = $('ss-place');
+  if (sel) sel.innerHTML = placeOptionsHtml();
 }
 function updateProductAutocomplete() {
   const dl = $('nameSuggestions');
@@ -1377,6 +1428,81 @@ const App = window.App = {
     }).join('');
   },
 
+  // ── お賽銭履歴 ────────────────────────────
+  async addSaisen() {
+    if (!db) return toast('Firebase未設定');
+    const date   = val('ss-date') || today();
+    const amount = num('ss-amount');
+    const place  = val('ss-place');
+    const memo   = val('ss-memo') || '';
+    if (!amount) return toast('金額を入力してください');
+    await addDoc(collection(db,'saisens'), { date, amount, place: place ?? null, memo });
+    ['ss-amount','ss-memo'].forEach(id => $(id).value = '');
+    $('ss-place').value = '';
+    $('ss-date').value = today();
+    toast('記録しました ✓');
+  },
+
+  renderSaisen() {
+    const el = $('saisenList');
+    if (!el) return;
+    const list = [...S.saisens].sort((a,b) => (b.date||'').localeCompare(a.date||''));
+
+    // 集計
+    const summary = $('saisenSummary');
+    if (list.length) {
+      const total = list.reduce((s,x) => s + (x.amount||0), 0);
+      const avg   = Math.round(total / list.length);
+      $('ss-total-count').textContent  = list.length;
+      $('ss-total-amount').textContent = `¥${total.toLocaleString()}`;
+      $('ss-avg').textContent          = `¥${avg.toLocaleString()}`;
+      if (summary) summary.style.display = 'flex';
+    } else {
+      if (summary) summary.style.display = 'none';
+    }
+
+    if (!list.length) { el.innerHTML = '<div class="empty">記録がありません</div>'; return; }
+
+    // 月ごとにグループ化
+    const grouped = {};
+    list.forEach(s => {
+      const month = (s.date || '不明').slice(0, 7); // "2026-04"
+      if (!grouped[month]) grouped[month] = [];
+      grouped[month].push(s);
+    });
+
+    el.innerHTML = Object.entries(grouped).map(([month, items]) => {
+      const monthTotal = items.reduce((s,x) => s + (x.amount||0), 0);
+      const rows = items.map(s => {
+        const place     = s.place ? S.places.find(pl => pl.name === s.place) : null;
+        const chipStyle = place ? `background:${COLORS[place.color]||'#999'}` : '';
+        return `
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid #f5f5f5;font-size:13px">
+            <div style="flex:0 0 76px;color:#888;font-size:12px">${s.date||'─'}</div>
+            <div style="flex:1;display:flex;flex-wrap:wrap;gap:4px;align-items:center">
+              ${place ? `<span class="place-chip" style="${chipStyle}">${h(place.abbr||place.name)}</span>` : ''}
+              ${s.memo ? `<span style="font-size:11px;color:#888">${h(s.memo)}</span>` : ''}
+            </div>
+            <div style="font-weight:700;flex:0 0 auto">¥${(s.amount||0).toLocaleString()}</div>
+            <button class="btn btn-danger btn-sm" onclick="App.deleteSaisen('${s.id}')">×</button>
+          </div>`;
+      }).join('');
+
+      return `
+        <div style="background:#f9f9f9;padding:8px 16px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:12px;font-weight:700;color:#666">${month.replace('-','年')}月</span>
+          <span style="font-size:12px;color:#e53935;font-weight:700">¥${monthTotal.toLocaleString()}</span>
+        </div>
+        ${rows}`;
+    }).join('');
+  },
+
+  async deleteSaisen(id) {
+    if (!confirm('この記録を削除しますか？')) return;
+    await deleteDoc(doc(db,'saisens',id));
+    toast('削除しました');
+  },
+
   // ── アシスト獲得 ──────────────────────────
   renderAssist() {
     const el = $('assistList');
@@ -1435,7 +1561,7 @@ const App = window.App = {
   // ── バックアップ ──────────────────────────
   exportData() {
     const data = JSON.stringify(
-      { products:S.products, inventories:S.inventories, records:S.records, places:S.places },
+      { products:S.products, inventories:S.inventories, records:S.records, places:S.places, saisens:S.saisens },
       null, 2
     );
     const a = document.createElement('a');
@@ -1457,11 +1583,12 @@ const App = window.App = {
       inventories: new Set(S.inventories.map(x=>x.id)),
       records:     new Set(S.records.map(x=>x.id)),
       places:      new Set(S.places.map(x=>x.name)),
+      saisens:     new Set(S.saisens.map(x=>x.id)),
     };
 
     const batch = writeBatch(db);
     let count = 0;
-    for (const col of ['products','inventories','records','places']) {
+    for (const col of ['products','inventories','records','places','saisens']) {
       for (const item of (data[col]||[])) {
         const { id, ...rest } = item;
         if (col === 'places') {
@@ -1486,7 +1613,8 @@ $('detailModal').addEventListener('click', e => {
 });
 
 // ── Init ──────────────────────────────────────
-$('f-date').value = today();
+$('f-date').value  = today();
+$('ss-date').value = today();
 const cfg = loadConfig();
 if (cfg) { $('cfgOverlay').style.display = 'none'; boot(cfg); }
 </script>
