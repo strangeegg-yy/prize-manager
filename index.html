@@ -416,6 +416,18 @@
       border-radius: 8px;
       margin-top: 4px;
     }
+    .opened-badge {
+      display: inline-block;
+      background: #e65100;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 8px;
+      margin-top: 4px;
+    }
+    .inv-status-opened { background: #fff3e0; }
+    .inv-status-sold   { background: #f5f5f5; }
   </style>
 </head>
 <body>
@@ -521,11 +533,20 @@
       </div>
     </div>
 
+    <!-- 開封ボタン -->
+    <div style="margin-top:4px">
+      <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid #e0e0e0;border-radius:8px;cursor:pointer;background:#fff" id="openedLabel">
+        <input type="checkbox" id="f-opened" style="width:20px;height:20px;accent-color:#e65100;cursor:pointer" onchange="App.toggleOpenedStyle()">
+        <span style="font-size:14px">📦 開封済みで登録</span>
+      </label>
+    </div>
+
     <button class="btn btn-primary btn-block" onclick="App.addRecord()">記録する</button>
     <div style="font-size:11px;color:#999;margin-top:10px;line-height:1.7;background:#f9f9f9;padding:8px 10px;border-radius:8px">
       💡 <b>初回登録</b>：在庫1個として自動記録<br>
       💡 <b>価格のみ更新</b>：在庫は変わらず価格だけ記録<br>
-      💡 <b>取得日 or 取得場所を入力</b>：2個目の獲得として記録
+      💡 <b>取得日 or 取得場所を入力</b>：2個目の獲得として記録<br>
+      💡 <b>開封済みで登録</b>：即アーカイブへ移動
     </div>
     <a class="subtle" href="https://www.e-trader.jp/kensaku_figure/" target="_blank" rel="noopener">↗ トレーダー買取検索を開く</a>
   </div>
@@ -877,8 +898,9 @@ const App = window.App = {
     }
 
     // 在庫ロジック
+    const opened = $('f-opened')?.checked || false;
+
     if (isNew) {
-      // 初回登録 → 在庫1個を必ず作成（取得情報があればそれを反映）
       batch.set(doc(collection(db,'inventories')), {
         pid,
         acqDate:   acqDate   ?? null,
@@ -886,9 +908,9 @@ const App = window.App = {
         acqPlace:  acqPlace  ?? null,
         sellDate:  sellDate  ?? null,
         sellPrice: sellPrice ?? null,
+        opened:    opened,
       });
     } else if (acqDate || acqPlace) {
-      // 既存商品 + 取得日 or 取得場所あり → 2個目以降の獲得として追加
       batch.set(doc(collection(db,'inventories')), {
         pid,
         acqDate:   acqDate   ?? null,
@@ -896,9 +918,9 @@ const App = window.App = {
         acqPlace:  acqPlace  ?? null,
         sellDate:  sellDate  ?? null,
         sellPrice: sellPrice ?? null,
+        opened:    opened,
       });
     }
-    // 既存商品 × 価格のみ → 在庫変更なし（価格記録のみ）
 
     await batch.commit();
 
@@ -906,11 +928,20 @@ const App = window.App = {
       .forEach(id => $(id).value = '');
     $('f-acqPlace').value = '';
     $('f-date').value = today();
+    if ($('f-opened')) { $('f-opened').checked = false; App.toggleOpenedStyle(); }
 
     const msg = isNew
-      ? '登録しました（在庫1個）✓'
+      ? (opened ? '登録しました（開封済み→アーカイブ）✓' : '登録しました（在庫1個）✓')
       : (acqDate || acqPlace) ? '追加獲得を記録しました ✓' : '価格を記録しました ✓';
     toast(msg);
+  },
+
+  toggleOpenedStyle() {
+    const cb    = $('f-opened');
+    const label = $('openedLabel');
+    if (!cb || !label) return;
+    label.style.background     = cb.checked ? '#fff3e0' : '#fff';
+    label.style.borderColor    = cb.checked ? '#e65100' : '#e0e0e0';
   },
 
   // ── ソート設定 ────────────────────────────
@@ -950,7 +981,7 @@ const App = window.App = {
       .filter(p => p.name.toLowerCase().includes(q))
       .map(p => {
         const invs    = S.inventories.filter(i => i.pid === p.id);
-        const actInvs = invs.filter(i => !i.sellDate && !i.sellPrice); // 売却済み除く
+        const actInvs = invs.filter(i => !i.sellDate && !i.sellPrice && !i.opened); // 売却・開封済み除く
         const recs    = S.records.filter(r => r.pid === p.id)
                         .sort((a,b) => (a.date||'').localeCompare(b.date||''));
         const latestRec = recs.length ? recs[recs.length - 1] : null;
@@ -1044,20 +1075,28 @@ const App = window.App = {
     const catLabel = { prize:'プライズ・クレゲー', scale:'スケールフィギュア', nendoroid:'ねんどろいど', other:'その他' };
 
     const invHtml = invs.length ? invs.map(inv => {
-      const place = inv.acqPlace ? S.places.find(pl => pl.name === inv.acqPlace) : null;
-      const chipStyle = place ? `background:${COLORS[place.color]||'#999'}` : '';
+      const place      = inv.acqPlace ? S.places.find(pl => pl.name === inv.acqPlace) : null;
+      const chipStyle  = place ? `background:${COLORS[place.color]||'#999'}` : '';
+      const isOpened   = !!inv.opened;
+      const isSold     = !isOpened && (inv.sellDate || inv.sellPrice);
+      const isActive   = !isOpened && !isSold;
+      const bgColor    = isOpened ? '#fff3e0' : isSold ? '#f5f5f5' : '#fff';
       return `
-        <div style="padding:10px 0;border-bottom:1px solid #f0f0f0">
-          <div style="font-size:13px;margin-bottom:4px">
-            ${inv.acqDate  ? `📅 ${inv.acqDate}` : '<span style="color:#bbb">取得日未設定</span>'}
-            ${inv.acqPrice ? ` ／ 取得 <b>${fmt(inv.acqPrice)}</b>` : ''}
-            ${place ? ` <span class="place-chip" style="${chipStyle};font-size:10px">${h(place.abbr||place.name)}</span>` : ''}
+        <div style="padding:10px 0;border-bottom:1px solid #f0f0f0;background:${bgColor};border-radius:6px;padding:10px;margin-bottom:6px">
+          <div style="font-size:13px;margin-bottom:4px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            ${isOpened ? '<span style="background:#e65100;color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px">📦 開封済</span>' : ''}
+            ${isSold   ? '<span style="background:#757575;color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px">💴 売却済</span>' : ''}
+            ${isActive ? '<span style="background:#1e88e5;color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px">在庫あり</span>' : ''}
+            ${inv.acqDate  ? `📅 ${inv.acqDate}` : ''}
+            ${inv.acqPrice ? `取得 <b>${fmt(inv.acqPrice)}</b>` : ''}
+            ${place ? `<span class="place-chip" style="${chipStyle};font-size:10px">${h(place.abbr||place.name)}</span>` : ''}
           </div>
-          ${inv.sellDate || inv.sellPrice ? `<div style="font-size:12px;color:#888">
-            💴 売却: ${inv.sellDate||'─'} ${inv.sellPrice ? fmt(inv.sellPrice) : ''}
+          ${isSold ? `<div style="font-size:12px;color:#888;margin-bottom:4px">
+            売却: ${inv.sellDate||'─'} ${inv.sellPrice ? fmt(inv.sellPrice) : ''}
           </div>` : ''}
-          <div style="display:flex;gap:6px;margin-top:6px">
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
             <button class="btn btn-secondary btn-sm" onclick="App.editInv('${inv.id}','${p.id}')">✏️ 編集</button>
+            ${isActive ? `<button class="btn btn-sm" style="background:#e65100;color:#fff" onclick="App.markOpened('${inv.id}','${p.id}')">📦 開封する</button>` : ''}
             <button class="btn btn-danger btn-sm" onclick="App.deleteInv('${inv.id}','${p.id}')">削除</button>
           </div>
         </div>`;
@@ -1220,6 +1259,13 @@ const App = window.App = {
     this.openDetail(pid);
   },
 
+  async markOpened(invId, pid) {
+    if (!confirm('この在庫を「開封済み」にしますか？\n在庫が1個減り、アーカイブに移動します。')) return;
+    await setDoc(doc(db,'inventories',invId), { opened: true }, { merge:true });
+    toast('開封済みにしました ✓');
+    this.openDetail(pid);
+  },
+
   async deleteRec(id, pid) {
     if (!confirm('この価格記録を削除しますか？')) return;
     await deleteDoc(doc(db,'records',id));
@@ -1352,17 +1398,18 @@ const App = window.App = {
     const el = $('archiveList');
     if (!el) return;
 
-    // 在庫0（全在庫が売却済み）の商品のみ
+    // 在庫0（全在庫が売却済み or 開封済み）の商品のみ
     const archived = S.products
       .filter(p => p.name.toLowerCase().includes(q))
       .map(p => {
-        const invs    = S.inventories.filter(i => i.pid === p.id);
-        const actInvs = invs.filter(i => !i.sellDate && !i.sellPrice);
-        const soldInvs= invs.filter(i =>  i.sellDate || i.sellPrice);
-        const recs    = S.records.filter(r => r.pid === p.id)
-                        .sort((a,b) => (a.date||'').localeCompare(b.date||''));
+        const invs     = S.inventories.filter(i => i.pid === p.id);
+        const actInvs  = invs.filter(i => !i.sellDate && !i.sellPrice && !i.opened);
+        const soldInvs = invs.filter(i => (i.sellDate || i.sellPrice) && !i.opened);
+        const openedInvs = invs.filter(i => i.opened);
+        const recs     = S.records.filter(r => r.pid === p.id)
+                         .sort((a,b) => (a.date||'').localeCompare(b.date||''));
         const latestRec = recs.length ? recs[recs.length-1] : null;
-        return { p, invs, actInvs, soldInvs, recs, latestRec };
+        return { p, invs, actInvs, soldInvs, openedInvs, recs, latestRec };
       })
       .filter(({ actInvs }) => actInvs.length === 0) // 在庫0のみ
       .sort((a,b) => {
@@ -1377,50 +1424,67 @@ const App = window.App = {
       return;
     }
 
-    el.innerHTML = archived.map(({ p, invs, soldInvs, recs, latestRec }) => {
-      const latest   = latestRec?.price ?? null;
-      const lastSold = [...soldInvs].sort((a,b)=>(b.sellDate||'').localeCompare(a.sellDate||''))[0];
-      const acqPlace = lastSold?.acqPlace;
-      const place    = acqPlace ? S.places.find(pl => pl.name === acqPlace) : null;
+    el.innerHTML = archived.map(({ p, invs, soldInvs, openedInvs, recs, latestRec }) => {
+      const latest      = latestRec?.price ?? null;
+      const hasOpened   = openedInvs.length > 0;
+      const hasSold     = soldInvs.length > 0;
+
+      // 代表となる在庫レコード（開封優先、なければ売却）
+      const repInv  = hasOpened
+        ? [...openedInvs].sort((a,b)=>(b.acqDate||'').localeCompare(a.acqDate||''))[0]
+        : [...soldInvs].sort((a,b)=>(b.sellDate||'').localeCompare(a.sellDate||''))[0];
+      const place    = repInv?.acqPlace ? S.places.find(pl => pl.name === repInv.acqPlace) : null;
       const chipStyle= place ? `background:${COLORS[place.color]||'#999'}` : '';
 
-      // 取得情報
+      // 取得情報行
       const acqLine = [
-        lastSold?.acqDate  ? `取得: ${lastSold.acqDate}` : '',
-        lastSold?.acqPrice ? `${fmt(lastSold.acqPrice)}` : '',
-        place              ? `<span class="place-chip" style="${chipStyle}">${h(place.abbr||place.name)}</span>` : '',
+        repInv?.acqDate  ? `取得: ${repInv.acqDate}` : '',
+        repInv?.acqPrice ? fmt(repInv.acqPrice) : '',
+        place ? `<span class="place-chip" style="${chipStyle}">${h(place.abbr||place.name)}</span>` : '',
       ].filter(Boolean).join(' ');
 
-      // 売却情報
-      const sellLine = [
-        lastSold?.sellDate  ? `売却: ${lastSold.sellDate}` : '売却日未入力',
-        lastSold?.sellPrice ? `${fmt(lastSold.sellPrice)}` : '',
-      ].filter(Boolean).join(' ／ ');
-
-      // 損益
+      // ステータス行
+      let statusLine = '';
       let profitHtml = '';
-      if (lastSold?.sellPrice && lastSold?.acqPrice) {
-        const diff = lastSold.sellPrice - lastSold.acqPrice;
-        const color = diff >= 0 ? '#2e7d32' : '#c62828';
-        const sign  = diff >= 0 ? '+' : '';
-        profitHtml = `<span style="font-size:11px;font-weight:700;color:${color}">${sign}${diff.toLocaleString()}円</span>`;
+      if (hasOpened) {
+        statusLine = `📦 開封済み`;
+      } else if (hasSold) {
+        const lastSold = soldInvs[0];
+        statusLine = [
+          lastSold.sellDate  ? `売却: ${lastSold.sellDate}` : '売却日未入力',
+          lastSold.sellPrice ? fmt(lastSold.sellPrice) : '',
+        ].filter(Boolean).join(' ／ ');
+        if (lastSold.sellPrice && lastSold.acqPrice) {
+          const diff  = lastSold.sellPrice - lastSold.acqPrice;
+          const color = diff >= 0 ? '#2e7d32' : '#c62828';
+          const sign  = diff >= 0 ? '+' : '';
+          profitHtml  = `<span style="font-size:11px;font-weight:700;color:${color}">${sign}${diff.toLocaleString()}円</span>`;
+        }
       }
+
+      const badge = hasOpened
+        ? `<div class="opened-badge">開封済</div>`
+        : `<div class="sold-badge">売却済</div>`;
 
       return `
         <div class="archive-item" onclick="App.openDetail('${p.id}')">
           <div class="archive-price-col">
             ${latest != null
-              ? `<div class="price-main" style="color:#888;font-size:${latest>=10000?'13px':'17px'}">${latest.toLocaleString()}</div>
+              ? `<div class="price-main" style="color:#888;font-size:${latest>=10000?'13px':'15px'}">${latest.toLocaleString()}</div>
                  <div class="price-label">買取円</div>`
-              : `<div style="font-size:12px;color:#bbb;text-align:center">買取<br>記録なし</div>`}
-            <div class="sold-badge">売却済</div>
+              : `<div style="font-size:11px;color:#bbb;text-align:center">買取<br>記録なし</div>`}
+            ${badge}
           </div>
           <div class="product-info-col">
             <div class="product-name" style="color:#555">${h(p.name)}</div>
-            ${acqLine ? `<div class="product-sub"><span class="sub-item">📦 ${acqLine}</span></div>` : ''}
-            <div class="product-sub"><span class="sub-item">💴 ${sellLine}</span> ${profitHtml}</div>
+            ${acqLine ? `<div class="product-sub"><span class="sub-item">${acqLine}</span></div>` : ''}
+            <div class="product-sub">
+              <span class="sub-item">${statusLine}</span> ${profitHtml}
+            </div>
             <div class="product-sub">
               <span class="sub-item">計${invs.length}個獲得</span>
+              ${openedInvs.length ? `<span class="sub-item">開封${openedInvs.length}個</span>` : ''}
+              ${soldInvs.length   ? `<span class="sub-item">売却${soldInvs.length}個</span>`   : ''}
               ${recs.length ? `<span class="sub-item">記録${recs.length}件</span>` : ''}
             </div>
           </div>
